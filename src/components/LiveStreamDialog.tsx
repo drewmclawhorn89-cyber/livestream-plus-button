@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Camera, Circle, Eye, Loader2, Radio, Signal, Video, X } from "lucide-react";
+import { Camera, Circle, Eye, Loader2, LockKeyhole, Radio, Signal, Video, X } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,6 +22,7 @@ const viewerId = () => globalThis.crypto?.randomUUID?.() ?? `viewer-${Date.now()
 export function LiveStreamDialog({ open, onOpenChange, userId, username, onRecord, onUpload }: Props) {
   const [mode, setMode] = useState<Mode>(null);
   const [liveNow, setLiveNow] = useState<LiveHost[]>([]);
+  const [followerCount, setFollowerCount] = useState<number | null>(null);
   const [title, setTitle] = useState("");
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState("");
@@ -38,6 +39,25 @@ export function LiveStreamDialog({ open, onOpenChange, userId, username, onRecor
   const peers = useRef<Map<string, RTCPeerConnection>>(new Map());
   const viewerToken = useRef(viewerId());
   const viewerSet = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!open || !userId || !username) {
+      setFollowerCount(null);
+      return;
+    }
+    let active = true;
+    supabase.from("follows").select("id", { count: "exact", head: true }).eq("following_username", username)
+      .then(({ count, error }) => {
+        if (!active) return;
+        if (error) {
+          setFollowerCount(null);
+          toast.error("Couldn't verify your follower count. Please try again.");
+          return;
+        }
+        setFollowerCount(count ?? 0);
+      });
+    return () => { active = false; };
+  }, [open, userId, username]);
 
   useEffect(() => {
     if (!open && mode === null) return;
@@ -224,6 +244,14 @@ export function LiveStreamDialog({ open, onOpenChange, userId, username, onRecor
       toast.error("Sign in to start a live stream.");
       return;
     }
+    if (followerCount === null) {
+      toast.error("We couldn't verify your follower count. Please try again.");
+      return;
+    }
+    if (followerCount < 500) {
+      toast.error(`You need 500 followers to go live. You have ${followerCount}.`);
+      return;
+    }
     setMode("host");
   };
 
@@ -236,11 +264,23 @@ export function LiveStreamDialog({ open, onOpenChange, userId, username, onRecor
           <DialogTitle className="px-6 pt-6 font-display text-2xl">Create something</DialogTitle>
           <DialogDescription className="px-6 text-sm text-zinc-400">Share a moment with the Coolerup community.</DialogDescription>
           <div className="space-y-3 px-6 pb-6 pt-2">
-            <button onClick={() => { closeMenu(); startHost(); }} disabled={!userId} className="flex w-full items-center gap-4 rounded-2xl border border-primary/40 bg-primary/10 p-4 text-left transition hover:bg-primary/20 disabled:opacity-50">
+            <button
+              onClick={() => {
+                if (followerCount !== null && followerCount >= 500) closeMenu();
+                startHost();
+              }}
+              disabled={!userId || followerCount === null || followerCount < 500}
+              className="flex w-full items-center gap-4 rounded-2xl border border-primary/40 bg-primary/10 p-4 text-left transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-55"
+            >
               <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-white"><Radio /></span>
               <span><span className="block font-bold">Go live</span><span className="text-sm text-zinc-400">Broadcast from your camera</span></span>
-              <Circle className="ml-auto h-3 w-3 fill-red-500 text-red-500" />
+              {followerCount !== null && followerCount >= 500 ? <Circle className="ml-auto h-3 w-3 fill-red-500 text-red-500" /> : <LockKeyhole className="ml-auto h-4 w-4 text-zinc-500" />}
             </button>
+            {userId && (
+              <p className="px-1 text-xs text-zinc-400" aria-live="polite">
+                {followerCount === null ? "Checking follower eligibility…" : followerCount >= 500 ? `${followerCount.toLocaleString()} followers · You can go live` : `${followerCount.toLocaleString()} / 500 followers · ${500 - followerCount} more needed to go live`}
+              </p>
+            )}
             <div className="rounded-2xl border border-white/10 p-4">
               <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-zinc-500"><Signal className="h-3.5 w-3.5" /> Live now</div>
               {liveNow.length === 0 ? <p className="py-2 text-sm text-zinc-500">No one is live right now. Start the first stream.</p> : (
